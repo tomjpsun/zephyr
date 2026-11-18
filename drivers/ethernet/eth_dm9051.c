@@ -690,6 +690,17 @@ static void eth_dm9051_rx_thread(void *p1, void *p2, void *p3)
 			continue;
 		}
 
+		/* W1C race: a packet arriving between the read and the
+		 * write-back has its PR bit cleared by the write-back, so
+		 * the INT line never asserts again. Re-read the ISR: if
+		 * PR/PT re-asserted, loop again without waiting. */
+		uint8_t isr2;
+
+		ret = eth_dm9051_spi_read_reg(dev, DM9051_ISR, &isr2);
+		if (ret == 0 && (isr2 & (DM9051_ISR_PR | DM9051_ISR_PT)) > 0) {
+			continue;
+		}
+
 		if ((isr & DM9051_ISR_PT) > 0) {
 			k_sem_give(&data->tx_done);
 			LOG_DBG("%s: Packet Transmitted", dev->name);
