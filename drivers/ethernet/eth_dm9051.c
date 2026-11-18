@@ -683,6 +683,16 @@ static void eth_dm9051_rx_thread(void *p1, void *p2, void *p3)
 			continue;
 		}
 
+		if ((isr & DM9051_ISR_PT) > 0) {
+			k_sem_give(&data->tx_done);
+		}
+
+		/* W1C: clear exactly the bits we read. A packet arriving
+		 * between this read and the write-back gets its PR bit
+		 * cleared too, so drain RX first, then clear PR again —
+		 * a packet arriving after the drain re-asserts PR (0->1)
+		 * and thus the INT edge. The 200 ms fallback above covers
+		 * any residual window. */
 		ret = eth_dm9051_spi_write_reg(dev, DM9051_ISR, isr);
 		if (ret < 0) {
 			LOG_ERR("%s: Failed to write ISR (err %d)", dev->name, ret);
@@ -690,26 +700,19 @@ static void eth_dm9051_rx_thread(void *p1, void *p2, void *p3)
 			continue;
 		}
 
-		/* W1C race: a packet arriving between the read and the
-		 * write-back has its PR bit cleared by the write-back, so
-		 * the INT line never asserts again. Re-read the ISR: if
-		 * PR/PT re-asserted, loop again without waiting. */
-		uint8_t isr2;
-
-		ret = eth_dm9051_spi_read_reg(dev, DM9051_ISR, &isr2);
-		if (ret == 0 && (isr2 & (DM9051_ISR_PR | DM9051_ISR_PT)) > 0) {
-			continue;
-		}
-
-		if ((isr & DM9051_ISR_PT) > 0) {
-			k_sem_give(&data->tx_done);
-			LOG_DBG("%s: Packet Transmitted", dev->name);
-		}
-
 		if ((isr & DM9051_ISR_PR) > 0) {
 			ret = eth_dm9051_rx(dev);
 			if (ret < 0) {
 				LOG_ERR("%s: RX failed (err %d)", dev->name, ret);
+			} else {
+				/* Drain complete; clear any PR re-asserted
+				 * during the drain. */
+				ret = eth_dm9051_spi_write_reg(dev, DM9051_ISR,
+							       DM9051_ISR_PR);
+				if (ret < 0) {
+					LOG_ERR("%s: Failed to clear ISR PR (err %d)",
+						dev->name, ret);
+				}
 			}
 			LOG_DBG("%s: Packet Received", dev->name);
 		}
