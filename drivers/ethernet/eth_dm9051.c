@@ -672,7 +672,9 @@ static void eth_dm9051_rx_thread(void *p1, void *p2, void *p3)
 	data = dev->data;
 
 	while (true) {
-		k_sem_take(&data->int_event, K_FOREVER);
+		/* Periodic fallback: a missed edge on the INT line must not
+		 * stall RX forever; wake up every 200 ms and check the ISR. */
+		(void)k_sem_take(&data->int_event, K_MSEC(200));
 
 		ret = eth_dm9051_spi_read_reg(dev, DM9051_ISR, &isr);
 		if (ret < 0) {
